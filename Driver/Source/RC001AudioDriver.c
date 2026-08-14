@@ -144,6 +144,7 @@ static UInt64								gDevice_NumberTimeStamps		= 0;
 static Float64								gDevice_AnchorSampleTime		= 0.0;
 static UInt64								gDevice_AnchorHostTime			= 0;
 static RC001AudioRingReader*				gDevice_AudioReader				= NULL;
+static UInt64								gDevice_AudioReaderRetryFrames	= 0;
 
 static bool									gStream_Input_IsActive			= true;
 static bool									gStream_Output_IsActive			= true;
@@ -3973,6 +3974,7 @@ static OSStatus	NullAudio_StartIO(AudioServerPlugInDriverRef inDriver, AudioObje
 		if(gDevice_AudioReader == NULL)
 		{
 			gDevice_AudioReader = RC001AudioRingReaderOpen();
+			gDevice_AudioReaderRetryFrames = 0;
 		}
 		gDevice_IOIsRunning = 1;
 		gDevice_NumberTimeStamps = 0;
@@ -4172,6 +4174,19 @@ static OSStatus	NullAudio_DoIOOperation(AudioServerPlugInDriverRef inDriver, Aud
 	//	Fill the input buffer from the bridge app's cross-process audio ring.
 	if(inOperationID == kAudioServerPlugInIOOperationReadInput)
 	{
+		// The driver can begin IO before RC001-Viber has created the shared ring
+		// (notably just after installation while this device is the default input).
+		// Keep the current IO session alive and retry once per second instead of
+		// returning silence forever until every microphone client disconnects.
+		if(gDevice_AudioReader == NULL)
+		{
+			gDevice_AudioReaderRetryFrames += inIOBufferFrameSize;
+			if(gDevice_AudioReaderRetryFrames >= (UInt64)gDevice_SampleRate)
+			{
+				gDevice_AudioReader = RC001AudioRingReaderOpen();
+				gDevice_AudioReaderRetryFrames = 0;
+			}
+		}
 		RC001AudioRingReaderReadStereoFloat32(
 			gDevice_AudioReader,
 			(float*)ioMainBuffer,
