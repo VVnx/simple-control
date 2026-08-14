@@ -1,29 +1,22 @@
 import ApplicationServices
 import AppKit
-import IOKit.hid
+import Darwin
+import Foundation
+import RC001HIDBridgeProtocol
 
-enum RC001HIDAccessStatus: Equatable {
-    case checking
-    case ready
-    case inputMonitoringRequired
-    case occupiedByAnotherApp
-    case failed(String)
-}
+typealias RC001HIDAccessStatus = RC001HIDHelperStatus
 
 final class RC001HIDMapper {
-    private static let vendorID = 0x2717
-    private static let productID = 0x32B8
-    private static let keyboardUsagePage: UInt32 = 0x07
-    private static let f5Usage: UInt32 = 0x3E
-    private static let powerUsage: UInt32 = 0x66
     private static let rightControlVirtualKey: CGKeyCode = 62
 
     private let log: (String) -> Void
     private let onAccessStatus: (RC001HIDAccessStatus) -> Void
-    private var manager: IOHIDManager?
-    private var arraySlotValues: [IOHIDElementCookie: UInt32] = [:]
+    private var statusTimer: Timer?
+    private var socketSource: DispatchSourceRead?
+    private var socketDescriptor: Int32 = -1
+    private var eventDecoder = RC001HIDEventStreamDecoder()
     private var rightControlDown = false
-    private(set) var accessStatus: RC001HIDAccessStatus = .checking
+    private(set) var accessStatus: RC001HIDAccessStatus = .starting
 
     init(
         log: @escaping (String) -> Void,
@@ -38,126 +31,133 @@ final class RC001HIDMapper {
     }
 
     func start() {
-        guard manager == nil else { return }
-        updateAccessStatus(.checking)
-
+        guard statusTimer == nil else { return }
         log("Accessibility permission: \(AXIsProcessTrusted() ? "granted" : "required")")
-        guard IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted else {
-            log("HID access requires Input Monitoring permission")
-            updateAccessStatus(.inputMonitoringRequired)
-            return
-        }
-
-        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
-        self.manager = manager
-
-        let matching: [String: Any] = [
-            kIOHIDVendorIDKey as String: Self.vendorID,
-            kIOHIDProductIDKey as String: Self.productID,
-        ]
-        IOHIDManagerSetDeviceMatching(manager, matching as CFDictionary)
-
-        let context = Unmanaged.passUnretained(self).toOpaque()
-        IOHIDManagerRegisterDeviceMatchingCallback(manager, rc001DeviceMatched, context)
-        IOHIDManagerRegisterDeviceRemovalCallback(manager, rc001DeviceRemoved, context)
-        IOHIDManagerRegisterInputValueCallback(manager, rc001InputValue, context)
-        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-
-        let openResult = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
-        if openResult == kIOReturnSuccess {
-            log("HID mapper started with exclusive access")
-            updateAccessStatus(.ready)
-        } else if openResult == kIOReturnNotPermitted {
-            log("HID access requires Input Monitoring permission")
-            updateAccessStatus(.inputMonitoringRequired)
-        } else if openResult == kIOReturnExclusiveAccess {
-            log("HID device is owned by another app; make Karabiner ignore RC001")
-            updateAccessStatus(.occupiedByAnotherApp)
-        } else {
-            let code = "0x\(String(UInt32(bitPattern: openResult), radix: 16))"
-            log("HID exclusive access failed: \(code)")
-            updateAccessStatus(.failed(code))
-        }
-
-        if openResult != kIOReturnSuccess {
-            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-            IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-            self.manager = nil
+        refreshStatus()
+        connectToHelperIfNeeded()
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            self?.refreshStatus()
+            self?.connectToHelperIfNeeded()
         }
     }
 
     func restart() {
-        log("Retrying HID exclusive access")
-        stop()
-        start()
+        log("Retrying connection to root HID helper")
+        disconnectFromHelper()
+        refreshStatus()
+        connectToHelperIfNeeded()
     }
 
     func stop() {
-        if rightControlDown {
-            postRightControl(isDown: false)
+        statusTimer?.invalidate()
+        statusTimer = nil
+        disconnectFromHelper()
+    }
+
+    private func refreshStatus() {
+        let status = readHelperStatus()
+        guard status != accessStatus else { return }
+        updateAccessStatus(status)
+        log("HID helper status: \(status.serialized)")
+    }
+
+    private func readHelperStatus() -> RC001HIDAccessStatus {
+        guard FileManager.default.isExecutableFile(atPath: RC001HIDBridgePaths.helperExecutable) else {
+            return .notInstalled
         }
-        guard let manager else { return }
-        IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-        IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-        self.manager = nil
+        guard let attributes = try? FileManager.default.attributesOfItem(
+            atPath: RC001HIDBridgePaths.status
+        ),
+              let modificationDate = attributes[.modificationDate] as? Date,
+              Date().timeIntervalSince(modificationDate) < 10,
+              let contents = try? String(
+                contentsOfFile: RC001HIDBridgePaths.status,
+                encoding: .utf8
+              )
+        else {
+            return .starting
+        }
+        return RC001HIDAccessStatus(serialized: contents)
     }
 
-    fileprivate func deviceMatched(_ device: IOHIDDevice) {
-        let name = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String
-        log("HID connected: \(name ?? "RC001")")
+    private func connectToHelperIfNeeded() {
+        guard socketSource == nil,
+              FileManager.default.fileExists(atPath: RC001HIDBridgePaths.socket)
+        else { return }
+
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { return }
+        var address: sockaddr_un
+        do {
+            address = try unixAddress(path: RC001HIDBridgePaths.socket)
+        } catch {
+            _ = close(descriptor)
+            log("Invalid HID helper socket path")
+            return
+        }
+        let addressLength = unixAddressLength(path: RC001HIDBridgePaths.socket)
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(descriptor, $0, addressLength)
+            }
+        }
+        guard result == 0 else {
+            _ = close(descriptor)
+            return
+        }
+
+        _ = fcntl(descriptor, F_SETFL, O_NONBLOCK)
+        _ = fcntl(descriptor, F_SETFD, FD_CLOEXEC)
+        socketDescriptor = descriptor
+        let source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: .main)
+        source.setEventHandler { [weak self] in self?.readAvailableEvents() }
+        source.setCancelHandler { _ = close(descriptor) }
+        socketSource = source
+        source.resume()
+        log("Connected to root HID helper")
     }
 
-    fileprivate func deviceRemoved(_ device: IOHIDDevice) {
-        arraySlotValues.removeAll()
-        setRightControl(isDown: false)
-        log("HID disconnected")
+    private func disconnectFromHelper() {
+        if rightControlDown { setRightControl(isDown: false) }
+        socketDescriptor = -1
+        socketSource?.cancel()
+        socketSource = nil
+        eventDecoder = RC001HIDEventStreamDecoder()
     }
 
-    fileprivate func inputValue(_ value: IOHIDValue) {
+    private func readAvailableEvents() {
+        guard socketDescriptor >= 0 else { return }
+        refreshStatus()
+
+        var buffer = [UInt8](repeating: 0, count: 1_024)
+        while socketDescriptor >= 0 {
+            let count = Darwin.read(socketDescriptor, &buffer, buffer.count)
+            if count > 0 {
+                let events = eventDecoder.append(Data(buffer.prefix(count)))
+                for event in events { handle(event) }
+            } else if count == 0 {
+                log("Root HID helper disconnected")
+                disconnectFromHelper()
+                return
+            } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                return
+            } else {
+                log("HID helper socket read failed: errno=\(errno)")
+                disconnectFromHelper()
+                return
+            }
+        }
+    }
+
+    private func handle(_ event: RC001HIDEvent) {
         guard accessStatus == .ready else { return }
-        let element = IOHIDValueGetElement(value)
-        let usagePage = IOHIDElementGetUsagePage(element)
-        guard usagePage == Self.keyboardUsagePage else { return }
-
-        let usage = IOHIDElementGetUsage(element)
-        let integerValue = IOHIDValueGetIntegerValue(value)
-        if usage > 0xE7 {
-            handleKeyboardArraySlot(
-                cookie: IOHIDElementGetCookie(element),
-                newUsage: integerValue > 0 ? UInt32(integerValue) : 0
-            )
-        } else {
-            handleKeyboardUsage(usage, isDown: integerValue != 0)
-        }
-    }
-
-    private func handleKeyboardArraySlot(cookie: IOHIDElementCookie, newUsage: UInt32) {
-        let voiceWasDown = arraySlotValues.values.contains(Self.f5Usage)
-        let powerWasDown = arraySlotValues.values.contains(Self.powerUsage)
-        arraySlotValues[cookie] = newUsage
-        let voiceIsDown = arraySlotValues.values.contains(Self.f5Usage)
-        let powerIsDown = arraySlotValues.values.contains(Self.powerUsage)
-
-        if voiceWasDown != voiceIsDown {
-            setRightControl(isDown: voiceIsDown)
-        }
-        if !powerWasDown && powerIsDown {
+        switch event {
+        case .voiceDown:
+            setRightControl(isDown: true)
+        case .voiceUp:
+            setRightControl(isDown: false)
+        case .power:
             openCodex()
-        }
-
-        if newUsage != 0 && newUsage != Self.f5Usage && newUsage != Self.powerUsage {
-            log("Unmapped HID keyboard usage: 0x\(String(newUsage, radix: 16))")
-        }
-    }
-
-    private func handleKeyboardUsage(_ usage: UInt32, isDown: Bool) {
-        switch usage {
-        case Self.f5Usage:
-            setRightControl(isDown: isDown)
-        case Self.powerUsage where isDown:
-            openCodex()
-        default:
-            break
         }
     }
 
@@ -199,34 +199,25 @@ final class RC001HIDMapper {
         accessStatus = status
         onAccessStatus(status)
     }
-}
 
-private func rc001DeviceMatched(
-    context: UnsafeMutableRawPointer?,
-    result: IOReturn,
-    sender: UnsafeMutableRawPointer?,
-    device: IOHIDDevice
-) {
-    guard result == kIOReturnSuccess, let context else { return }
-    Unmanaged<RC001HIDMapper>.fromOpaque(context).takeUnretainedValue().deviceMatched(device)
-}
+    private func unixAddress(path: String) throws -> sockaddr_un {
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = path.utf8CString
+        let capacity = MemoryLayout.size(ofValue: address.sun_path)
+        guard bytes.count <= capacity else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENAMETOOLONG))
+        }
+        withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: capacity) { destination in
+                for index in 0..<bytes.count { destination[index] = bytes[index] }
+            }
+        }
+        return address
+    }
 
-private func rc001DeviceRemoved(
-    context: UnsafeMutableRawPointer?,
-    result: IOReturn,
-    sender: UnsafeMutableRawPointer?,
-    device: IOHIDDevice
-) {
-    guard result == kIOReturnSuccess, let context else { return }
-    Unmanaged<RC001HIDMapper>.fromOpaque(context).takeUnretainedValue().deviceRemoved(device)
-}
-
-private func rc001InputValue(
-    context: UnsafeMutableRawPointer?,
-    result: IOReturn,
-    sender: UnsafeMutableRawPointer?,
-    value: IOHIDValue
-) {
-    guard result == kIOReturnSuccess, let context else { return }
-    Unmanaged<RC001HIDMapper>.fromOpaque(context).takeUnretainedValue().inputValue(value)
+    private func unixAddressLength(path: String) -> socklen_t {
+        let offset = MemoryLayout<sockaddr_un>.offset(of: \sockaddr_un.sun_path) ?? 0
+        return socklen_t(offset + path.utf8CString.count)
+    }
 }

@@ -11,8 +11,9 @@
 - 将解码音频实时升采样到 48 kHz，并写入跨进程环形缓冲区；
 - 构建 Core Audio Audio Server Plug-in，向系统提供 `RC001 Remote Microphone`；
 - 按设备接管 HID：语音键映射为右 Control，开关键打开 Codex；
+- 通过常驻 root HID Helper 独占目标键盘集合，避免开关键继续进入 macOS；
 - 提供菜单栏状态与可视化映射页。
-- 提供独立的“权限检查与授权”页面，逐项检查输入监控、辅助功能、蓝牙和虚拟麦克风；
+- 提供独立的“权限检查与授权”页面，逐项检查 HID Helper、辅助功能、蓝牙和虚拟麦克风；
 - 在按键尚未独占接管时明确提示不要测试开关键，避免触发 macOS 关机菜单。
 
 当前安装包已在实机完成系统级驱动安装、BLE 语音接收和虚拟麦克风枚举验证。
@@ -28,9 +29,10 @@
 ## 构建与测试
 
 ```bash
-cd projects/RC001MacBridge
+cd ~/simple-control
 swift test
 ./build_probe_app.sh
+./build_hid_helper_app.sh
 ./build_audio_driver.sh
 ./build_installer_pkg.sh
 ```
@@ -38,16 +40,29 @@ swift test
 产物位于 `dist/`：
 
 - `RC001-Viber.app`：菜单栏应用、按键映射、BLE 语音接收；
+- `RC001-Viber HID Helper.app`：只接管 RC001 键盘集合的 root Helper；
 - `RC001 Remote Microphone.driver`：Core Audio 虚拟输入驱动；
-- `RC001-Viber-0.1.2.pkg`：安装以上两个组件并重启音频服务。
+- `RC001-Viber-0.1.3.pkg`：安装以上组件、注册按键接管服务并重启音频服务。
 
 安装后首次运行需要在“隐私与安全性”中允许：
 
 1. 蓝牙：连接遥控器并读取语音服务；
-2. 输入监控：独占读取 RC001 的 HID 按键；
-3. 辅助功能：生成右 Control 按键事件。
+2. 输入监控：点击“+”添加 `/Applications/RC001-Viber HID Helper.app` 并开启；
+3. 辅助功能：给 `/Applications/RC001-Viber.app` 生成右 Control 按键事件的权限。
+
+输入监控只授予独立 Helper，不需要授予 RC001-Viber 主应用。权限页会读取 Helper 的实时状态；只有显示“已接管”后，才应测试开关键。
 
 Karabiner 若仍抓取 RC001，会导致独占打开失败。迁移时应先让 Karabiner 忽略该设备或退出 Karabiner，再启动 RC001-Viber。
+
+## 按键接管架构
+
+`RC001-Viber HID Helper` 由系统 LaunchDaemon 以 root 运行，只匹配以下 HID 键盘集合：
+
+- Vendor ID：`0x2717`
+- Product ID：`0x32B8`
+- Primary Usage：Generic Desktop / Keyboard
+
+Helper 不联网、不读取用户文件，也不接受主应用命令。它仅通过 root 创建的本地 Unix socket 向主应用发送 `voice_down`、`voice_up`、`power` 三种事件。主应用负责生成右 Control 或打开 Codex。安全边界与安装位置详见 [`docs/SECURITY.md`](docs/SECURITY.md)。
 
 ## 运行数据
 
@@ -69,6 +84,8 @@ Karabiner 若仍抓取 RC001，会导致独占打开失败。迁移时应先让 
 - `Sources/RC001Core/`：协议解析、IMA ADPCM 解码、WAV 与共享音频写入；
 - `Sources/RC001SharedAudio/`：应用/驱动共用的无锁跨进程音频环；
 - `Sources/RC001Probe/`：BLE 接收、HID 映射和菜单栏界面；
+- `Sources/RC001HIDHelper/`：root HID 独占接管与最小事件转发；
+- `Sources/RC001HIDBridgeProtocol/`：Helper 与主应用之间的只读事件协议；
 - `Driver/`：基于 Apple NullAudio 示例改造的 Audio Server Plug-in；
 - `docs/PROTOCOL.md`：设备协议与实机验证记录。
 

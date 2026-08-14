@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.wangxi.RC001Viber.HIDHelper</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Applications/RC001-Viber HID Helper.app/Contents/MacOS/rc001-hid-helper</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<key>StandardOutPath</key>
+	<string>/var/log/rc001-viber-hid.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/rc001-viber-hid.log</string>
+</dict>
+</plist>

@@ -5,10 +5,10 @@ final class RC001StatusMenu: NSObject {
     private let remoteItem = NSMenuItem(title: "遥控器：正在连接…", action: nil, keyEquivalent: "")
     private let microphoneItem = NSMenuItem(title: "麦克风：等待遥控器", action: nil, keyEquivalent: "")
     private var settingsWindow: NSWindow?
-    private var hidAccessStatus: RC001HIDAccessStatus = .checking
+    private var hidAccessStatus: RC001HIDAccessStatus = .starting
     var retryHIDAccessHandler: (() -> Void)?
     private lazy var permissionWindowController = RC001PermissionWindowController(
-        hidStatusProvider: { [weak self] in self?.hidAccessStatus ?? .checking },
+        hidStatusProvider: { [weak self] in self?.hidAccessStatus ?? .starting },
         retryHIDAccess: { [weak self] in self?.retryHIDAccessHandler?() }
     )
 
@@ -103,7 +103,7 @@ final class RC001StatusMenu: NSObject {
         let powerMapping = mappingRow(source: "开关键", destination: "打开 Codex")
         let microphone = mappingRow(source: "遥控器麦克风", destination: "RC001 Remote Microphone")
         let permissionNote = label(
-            "首次使用需要在“隐私与安全性”中允许输入监控和辅助功能；虚拟麦克风驱动安装后会出现在所有录音应用中。",
+            "首次使用需要给 HID Helper 输入监控权限、给 RC001-Viber 辅助功能与蓝牙权限；虚拟麦克风驱动安装后会出现在所有录音应用中。",
             size: 12,
             color: .secondaryLabelColor
         )

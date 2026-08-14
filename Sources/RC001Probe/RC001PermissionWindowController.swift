@@ -1,10 +1,10 @@
 import AppKit
 import ApplicationServices
 import CoreBluetooth
-import IOKit.hid
+import RC001HIDBridgeProtocol
 
 struct RC001PermissionSnapshot {
-    let inputMonitoringGranted: Bool
+    let hidHelperInstalled: Bool
     let accessibilityGranted: Bool
     let bluetoothAuthorization: CBManagerAuthorization
     let virtualMicrophoneInstalled: Bool
@@ -14,14 +14,16 @@ struct RC001PermissionSnapshot {
     }
 
     var requiredPermissionsGranted: Bool {
-        inputMonitoringGranted && accessibilityGranted && bluetoothGranted && virtualMicrophoneInstalled
+        hidHelperInstalled && accessibilityGranted && bluetoothGranted && virtualMicrophoneInstalled
     }
 }
 
 enum RC001PermissionChecker {
     static func snapshot() -> RC001PermissionSnapshot {
         RC001PermissionSnapshot(
-            inputMonitoringGranted: IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted,
+            hidHelperInstalled: FileManager.default.isExecutableFile(
+                atPath: RC001HIDBridgePaths.helperExecutable
+            ),
             accessibilityGranted: AXIsProcessTrusted(),
             bluetoothAuthorization: CBCentralManager.authorization,
             virtualMicrophoneInstalled: FileManager.default.fileExists(
@@ -40,8 +42,8 @@ final class RC001PermissionWindowController: NSObject, NSWindowDelegate {
     private let safetyBanner = NSTextField(wrappingLabelWithString: "正在检查遥控器接管状态…")
     private let inputStep = RC001PermissionStepView(
         number: 1,
-        title: "输入监控",
-        detail: "独占读取 RC001 按键；未生效时，开关键仍会触发系统关机菜单。",
+        title: "按键接管服务",
+        detail: "在“输入监控”中添加并开启 RC001-Viber HID Helper；它只接管这只遥控器。",
         buttonTitle: "打开输入监控"
     )
     private let accessibilityStep = RC001PermissionStepView(
@@ -96,7 +98,7 @@ final class RC001PermissionWindowController: NSObject, NSWindowDelegate {
 
     func showIfNeeded() {
         let snapshot = RC001PermissionChecker.snapshot()
-        if !snapshot.requiredPermissionsGranted || hidStatusProvider() != .ready {
+        if !snapshot.requiredPermissionsGranted || !hidStatusProvider().helperIsOperational {
             show()
         }
     }
@@ -147,7 +149,7 @@ final class RC001PermissionWindowController: NSObject, NSWindowDelegate {
         safetyBanner.heightAnchor.constraint(greaterThanOrEqualToConstant: 46).isActive = true
 
         let hint = NSTextField(wrappingLabelWithString:
-            "授权后返回本页并点击“重新检查并接管遥控器”。如果系统开关已经开启但这里仍显示未授权，请先在系统设置中删除旧的 RC001 条目，再点“+”添加 /Applications/RC001-Viber.app。"
+            "第 1 步：点“打开输入监控”→ 点“+”→ 选择 /Applications/RC001-Viber HID Helper.app → 开启开关。授权后返回本页，服务会自动重试；无需给 RC001-Viber 主应用输入监控权限。"
         )
         hint.font = .systemFont(ofSize: 11.5)
         hint.textColor = .secondaryLabelColor
@@ -199,7 +201,11 @@ final class RC001PermissionWindowController: NSObject, NSWindowDelegate {
 
     private func refresh() {
         let snapshot = RC001PermissionChecker.snapshot()
-        inputStep.update(ready: snapshot.inputMonitoringGranted, status: snapshot.inputMonitoringGranted ? "已授权" : "未授权")
+        let hidStatus = hidStatusProvider()
+        inputStep.update(
+            ready: hidStatus.helperIsOperational,
+            status: helperStatusText(hidStatus)
+        )
         accessibilityStep.update(ready: snapshot.accessibilityGranted, status: snapshot.accessibilityGranted ? "已授权" : "未授权")
         bluetoothStep.update(
             ready: snapshot.bluetoothGranted,
@@ -210,12 +216,26 @@ final class RC001PermissionWindowController: NSObject, NSWindowDelegate {
             status: snapshot.virtualMicrophoneInstalled ? "驱动已安装" : "驱动未安装"
         )
 
-        let hidStatus = hidStatusProvider()
         switch hidStatus {
         case .ready where snapshot.requiredPermissionsGranted:
             updateSafetyBanner(
                 "✓ 遥控器按键已被安全接管，可以测试语音键和开关键。",
                 color: .systemGreen
+            )
+        case .waitingForRemote where snapshot.requiredPermissionsGranted:
+            updateSafetyBanner(
+                "✓ 按键接管服务已就绪，正在等待遥控器连接。连接后再测试开关键。",
+                color: .systemBlue
+            )
+        case .notInstalled:
+            updateSafetyBanner(
+                "⚠ HID Helper 未安装，请重新安装最新版 RC001-Viber。",
+                color: .systemRed
+            )
+        case .inputMonitoringRequired:
+            updateSafetyBanner(
+                "⚠ 暂时不要按开关键：请先在输入监控中授权 RC001-Viber HID Helper。",
+                color: .systemRed
             )
         case .occupiedByAnotherApp:
             updateSafetyBanner(
@@ -232,6 +252,18 @@ final class RC001PermissionWindowController: NSObject, NSWindowDelegate {
                 "⚠ 暂时不要按开关键：按键尚未被接管，macOS 仍可能显示关机菜单。",
                 color: .systemOrange
             )
+        }
+    }
+
+    private func helperStatusText(_ status: RC001HIDAccessStatus) -> String {
+        switch status {
+        case .notInstalled: "未安装"
+        case .starting: "正在启动"
+        case .inputMonitoringRequired: "未授权"
+        case .waitingForRemote: "服务已就绪"
+        case .ready: "已接管"
+        case .occupiedByAnotherApp: "被占用"
+        case .failed: "服务异常"
         }
     }
 

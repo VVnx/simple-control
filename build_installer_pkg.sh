@@ -2,28 +2,37 @@
 set -euo pipefail
 
 PROJECT_DIR="${0:A:h}"
-PACKAGE_PATH="$PROJECT_DIR/dist/RC001-Viber-0.1.2.pkg"
+PACKAGE_PATH="$PROJECT_DIR/dist/RC001-Viber-0.1.3.pkg"
 STAGING_DIR="$(mktemp -d '/tmp/rc001-mac-bridge-package.XXXXXX')"
 PAYLOAD_DIR="$STAGING_DIR/payload"
 SCRIPTS_DIR="$STAGING_DIR/scripts"
 COMPONENT_PLIST="$STAGING_DIR/components.plist"
 BUILD_APP_DIR="$STAGING_DIR/build/RC001-Viber.app"
+BUILD_HELPER_DIR="$STAGING_DIR/build/RC001-Viber HID Helper.app"
 export COPYFILE_DISABLE=1
 
 RC001_APP_OUTPUT="$BUILD_APP_DIR" "$PROJECT_DIR/build_probe_app.sh"
+RC001_HID_HELPER_OUTPUT="$BUILD_HELPER_DIR" "$PROJECT_DIR/build_hid_helper_app.sh"
 "$PROJECT_DIR/build_audio_driver.sh"
 
 mkdir -p \
   "$PAYLOAD_DIR/Applications" \
   "$PAYLOAD_DIR/Library/Audio/Plug-Ins/HAL" \
+  "$PAYLOAD_DIR/Library/LaunchDaemons" \
   "$SCRIPTS_DIR"
 
 ditto --norsrc --noextattr \
   "$BUILD_APP_DIR" \
   "$PAYLOAD_DIR/Applications/RC001-Viber.app"
 ditto --norsrc --noextattr \
+  "$BUILD_HELPER_DIR" \
+  "$PAYLOAD_DIR/Applications/RC001-Viber HID Helper.app"
+ditto --norsrc --noextattr \
   "$PROJECT_DIR/dist/RC001 Remote Microphone.driver" \
   "$PAYLOAD_DIR/Library/Audio/Plug-Ins/HAL/RC001 Remote Microphone.driver"
+cp \
+  "$PROJECT_DIR/Resources/com.wangxi.RC001Viber.HIDHelper.plist" \
+  "$PAYLOAD_DIR/Library/LaunchDaemons/com.wangxi.RC001Viber.HIDHelper.plist"
 cp "$PROJECT_DIR/Driver/Scripts/postinstall" "$SCRIPTS_DIR/postinstall"
 chmod +x "$SCRIPTS_DIR/postinstall"
 xattr -cr "$PAYLOAD_DIR" "$SCRIPTS_DIR"
@@ -47,7 +56,7 @@ pkgbuild \
   --scripts "$SCRIPTS_DIR" \
   --component-plist "$COMPONENT_PLIST" \
   --identifier 'com.wangxi.RC001MacBridge' \
-  --version '0.1.2' \
+  --version '0.1.3' \
   --install-location '/' \
   "$PACKAGE_PATH"
 

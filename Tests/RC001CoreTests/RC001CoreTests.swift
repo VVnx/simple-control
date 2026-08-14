@@ -1,9 +1,34 @@
 import Foundation
+import RC001HIDBridgeProtocol
 import RC001SharedAudio
 import XCTest
 @testable import RC001Core
 
 final class RC001CoreTests: XCTestCase {
+    func testHIDHelperStatusRoundTrips() {
+        let statuses: [RC001HIDHelperStatus] = [
+            .notInstalled,
+            .starting,
+            .inputMonitoringRequired,
+            .waitingForRemote,
+            .ready,
+            .occupiedByAnotherApp,
+            .failed("0xe00002c1"),
+        ]
+        for status in statuses {
+            XCTAssertEqual(RC001HIDHelperStatus(serialized: status.serialized), status)
+        }
+    }
+
+    func testHIDEventStreamDecoderHandlesSplitAndUnknownLines() {
+        var decoder = RC001HIDEventStreamDecoder()
+        XCTAssertEqual(decoder.append(Data("voice_do".utf8)), [])
+        XCTAssertEqual(
+            decoder.append(Data("wn\nunknown\npower\nvoice_up\n".utf8)),
+            [.voiceDown, .power, .voiceUp]
+        )
+    }
+
     func testDecoderUsesHighNibbleFirst() {
         var decoder = IMAADPCMDecoder()
         XCTAssertEqual(decoder.decode(Data([0x11])), [1, 2])

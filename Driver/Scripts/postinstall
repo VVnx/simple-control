@@ -2,14 +2,36 @@
 set -euo pipefail
 
 driver_path='/Library/Audio/Plug-Ins/HAL/RC001 Remote Microphone.driver'
+helper_path='/Applications/RC001-Viber HID Helper.app'
+daemon_path='/Library/LaunchDaemons/com.wangxi.RC001Viber.HIDHelper.plist'
+daemon_label='com.wangxi.RC001Viber.HIDHelper'
 
 if [[ ! -d "$driver_path" ]]; then
   print -u2 "RC001 audio driver was not installed at the expected path"
   exit 1
 fi
 
+if [[ ! -x "$helper_path/Contents/MacOS/rc001-hid-helper" ]]; then
+  print -u2 "RC001 HID helper was not installed at the expected path"
+  exit 1
+fi
+
+if [[ ! -f "$daemon_path" ]]; then
+  print -u2 "RC001 HID helper LaunchDaemon was not installed"
+  exit 1
+fi
+
 /usr/sbin/chown -R root:wheel "$driver_path"
 /bin/chmod -R go-w "$driver_path"
+/usr/sbin/chown -R root:wheel "$helper_path"
+/bin/chmod -R go-w "$helper_path"
+/usr/sbin/chown root:wheel "$daemon_path"
+/bin/chmod 644 "$daemon_path"
+
+/bin/launchctl bootout "system/$daemon_label" >/dev/null 2>&1 || true
+/bin/launchctl bootstrap system "$daemon_path"
+/bin/launchctl enable "system/$daemon_label"
+/bin/launchctl kickstart -k "system/$daemon_label"
 
 # The system launchd domain rejects kickstart for this SIP-protected service on
 # current macOS releases. A signal is sufficient; launchd starts it again. Do
