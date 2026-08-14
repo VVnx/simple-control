@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT_DIR="${0:A:h}"
-PACKAGE_PATH="$PROJECT_DIR/dist/RC001-Viber-0.1.6.pkg"
+PACKAGE_PATH="$PROJECT_DIR/dist/RC001-Viber-0.1.7.pkg"
 STAGING_DIR="$(mktemp -d '/tmp/rc001-mac-bridge-package.XXXXXX')"
 PAYLOAD_DIR="$STAGING_DIR/payload"
 SCRIPTS_DIR="$STAGING_DIR/scripts"
@@ -56,7 +56,7 @@ pkgbuild \
   --scripts "$SCRIPTS_DIR" \
   --component-plist "$COMPONENT_PLIST" \
   --identifier 'com.wangxi.RC001MacBridge' \
-  --version '0.1.6' \
+  --version '0.1.7' \
   --install-location '/' \
   "$PACKAGE_PATH"
 

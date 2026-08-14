@@ -93,13 +93,7 @@ A minimal user-space driver.
 //		- data written to it is ignored
 //	- controls
 //		- master input volume
-//		- master output volume
 //		- master input mute
-//		- master output mute
-//		- master input data source
-//		- master output data source
-//		- master play-through data destination
-//		- all are for illustration purposes only and do not actually manipulate data
 
 
 //	Declare the internal object ID numbers for all the objects this driver implements. Note that
@@ -1953,11 +1947,11 @@ static OSStatus	NullAudio_GetDevicePropertyDataSize(AudioServerPlugInDriverRef i
 			switch(inAddress->mScope)
 			{
 				case kAudioObjectPropertyScopeGlobal:
-					*outDataSize = 4 * sizeof(AudioObjectID);
+					*outDataSize = 3 * sizeof(AudioObjectID);
 					break;
 
 				case kAudioObjectPropertyScopeInput:
-					*outDataSize = 4 * sizeof(AudioObjectID);
+					*outDataSize = 3 * sizeof(AudioObjectID);
 					break;
 
 				case kAudioObjectPropertyScopeOutput:
@@ -2024,7 +2018,7 @@ static OSStatus	NullAudio_GetDevicePropertyDataSize(AudioServerPlugInDriverRef i
 			break;
 
 		case kAudioObjectPropertyControlList:
-			*outDataSize = 3 * sizeof(AudioObjectID);
+			*outDataSize = 2 * sizeof(AudioObjectID);
 			break;
 
 		case kAudioDevicePropertySafetyOffset:
@@ -2162,10 +2156,10 @@ static OSStatus	NullAudio_GetDevicePropertyData(AudioServerPlugInDriverRef inDri
 			switch(inAddress->mScope)
 			{
 				case kAudioObjectPropertyScopeGlobal:
-					//	global scope returns the input stream and its three controls
-					if(theNumberItemsToFetch > 4)
+					//	global scope returns the input stream, volume, and mute controls
+					if(theNumberItemsToFetch > 3)
 					{
-						theNumberItemsToFetch = 4;
+						theNumberItemsToFetch = 3;
 					}
 
 					//	fill out the list with as many objects as requested, which is everything
@@ -2177,9 +2171,9 @@ static OSStatus	NullAudio_GetDevicePropertyData(AudioServerPlugInDriverRef inDri
 
 				case kAudioObjectPropertyScopeInput:
 					//	input scope means just the objects on the input side
-					if(theNumberItemsToFetch > 4)
+					if(theNumberItemsToFetch > 3)
 					{
-						theNumberItemsToFetch = 4;
+						theNumberItemsToFetch = 3;
 					}
 
 					//	fill out the list with the right objects
@@ -2367,9 +2361,9 @@ static OSStatus	NullAudio_GetDevicePropertyData(AudioServerPlugInDriverRef inDri
 			//	number is allowed to be smaller than the actual size of the list. In such
 			//	case, only that number of items will be returned
 			theNumberItemsToFetch = inDataSize / sizeof(AudioObjectID);
-			if(theNumberItemsToFetch > 3)
+			if(theNumberItemsToFetch > 2)
 			{
-				theNumberItemsToFetch = 3;
+				theNumberItemsToFetch = 2;
 			}
 
 			//	fill out the list with as many objects as requested, which is everything
