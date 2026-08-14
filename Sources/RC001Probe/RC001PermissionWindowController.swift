@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CoreBluetooth
+import RC001Core
 import RC001HIDBridgeProtocol
 
 struct RC001PermissionSnapshot {
@@ -161,6 +162,13 @@ final class RC001PermissionWindowController: NSObject, NSWindowDelegate {
         footer.spacing = 16
         refreshButton.widthAnchor.constraint(equalToConstant: 190).isActive = true
 
+        let versionLabel = label(
+            RC001AppVersion().displayText,
+            size: 11.5,
+            color: .tertiaryLabelColor
+        )
+        versionLabel.alignment = .right
+
         let stack = NSStackView(views: [
             header,
             safetyBanner,
@@ -169,6 +177,7 @@ final class RC001PermissionWindowController: NSObject, NSWindowDelegate {
             bluetoothStep,
             microphoneStep,
             footer,
+            versionLabel,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -186,6 +195,7 @@ final class RC001PermissionWindowController: NSObject, NSWindowDelegate {
             bluetoothStep.widthAnchor.constraint(equalTo: stack.widthAnchor),
             microphoneStep.widthAnchor.constraint(equalTo: stack.widthAnchor),
             footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            versionLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
         self.window = window

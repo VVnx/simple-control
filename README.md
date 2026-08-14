@@ -46,7 +46,7 @@ swift test
 - `RC001-Viber.app`：菜单栏应用、按键映射、BLE 语音接收；
 - `RC001-Viber HID Helper.app`：只接管 RC001 键盘集合的 root Helper；
 - `RC001 Remote Microphone.driver`：Core Audio 虚拟输入驱动；
-- `RC001-Viber-0.1.8.pkg`：安装以上组件、注册按键接管服务并重启音频服务。
+- `RC001-Viber-0.1.9.pkg`：安装以上组件、注册按键接管服务并重启音频服务。
 
 安装后首次运行需要在“隐私与安全性”中允许：
 

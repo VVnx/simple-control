@@ -5,6 +5,25 @@ import XCTest
 @testable import RC001Core
 
 final class RC001CoreTests: XCTestCase {
+    func testAppVersionFormatsReleaseAndBuild() {
+        let version = RC001AppVersion(infoDictionary: [
+            "CFBundleShortVersionString": "0.1.9",
+            "CFBundleVersion": "10",
+        ])
+
+        XCTAssertEqual(version.release, "0.1.9")
+        XCTAssertEqual(version.build, "10")
+        XCTAssertEqual(version.displayText, "版本 0.1.9（构建 10）")
+    }
+
+    func testAppVersionFallsBackForDevelopmentBuild() {
+        let version = RC001AppVersion(infoDictionary: nil)
+
+        XCTAssertEqual(version.release, "开发版")
+        XCTAssertNil(version.build)
+        XCTAssertEqual(version.displayText, "版本 开发版")
+    }
+
     func testHIDHelperStatusRoundTrips() {
         let statuses: [RC001HIDHelperStatus] = [
             .notInstalled,

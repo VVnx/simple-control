@@ -1,4 +1,5 @@
 import AppKit
+import RC001Core
 
 final class RC001StatusMenu: NSObject {
     private let statusItem: NSStatusItem
@@ -110,6 +111,13 @@ final class RC001StatusMenu: NSObject {
         permissionNote.maximumNumberOfLines = 3
         let permissionButton = NSButton(title: "检查权限与授权…", target: self, action: #selector(showPermissions))
         permissionButton.bezelStyle = .rounded
+        let versionLabel = label(
+            RC001AppVersion().displayText,
+            size: 11.5,
+            color: .tertiaryLabelColor
+        )
+        versionLabel.alignment = .right
+        versionLabel.widthAnchor.constraint(equalToConstant: 464).isActive = true
 
         let stack = NSStackView(views: [
             title,
@@ -122,6 +130,7 @@ final class RC001StatusMenu: NSObject {
             separator(),
             permissionNote,
             permissionButton,
+            versionLabel,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
