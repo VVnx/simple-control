@@ -1,0 +1,19 @@
+#!/bin/zsh
+set -euo pipefail
+
+driver_path='/Library/Audio/Plug-Ins/HAL/RC001 Remote Microphone.driver'
+
+if [[ ! -d "$driver_path" ]]; then
+  print -u2 "RC001 audio driver was not installed at the expected path"
+  exit 1
+fi
+
+/usr/sbin/chown -R root:wheel "$driver_path"
+/bin/chmod -R go-w "$driver_path"
+
+# The system launchd domain rejects kickstart for this SIP-protected service on
+# current macOS releases. A signal is sufficient; launchd starts it again. Do
+# not fail an otherwise valid install if the process is between restarts.
+/usr/bin/killall coreaudiod >/dev/null 2>&1 || true
+
+exit 0

@@ -1,0 +1,14 @@
+/*
+See the LICENSE.txt file for this sample’s licensing information.
+
+Abstract:
+Localized strings displayed by the device.
+*/
+
+DeviceName = "RC001 Remote Microphone";
+InputStreamName = "RC001 Voice Input";
+OutputStreamName = "RC001 Audio Output (unused)";
+ManufacturerName = "RC001-Viber";
+MasterElementName = "Master";
+LeftElementName = "Left";
+RightElementName = "Right";
