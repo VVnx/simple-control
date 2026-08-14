@@ -19,6 +19,10 @@ int RC001AudioRingLastError(void);
 
 /// Creates or resets the cross-process ring buffer used by the bridge app.
 RC001AudioRingWriter *RC001AudioRingWriterCreate(void);
+
+/// Named variants are intended for isolated tests and diagnostics. Production
+/// callers should use RC001AudioRingWriterCreate/RC001AudioRingReaderOpen.
+RC001AudioRingWriter *RC001AudioRingWriterCreateNamed(const char *name);
 void RC001AudioRingWriterDestroy(RC001AudioRingWriter *writer);
 
 /// Marks the first sample of a new press-to-talk stream.
@@ -34,7 +38,11 @@ bool RC001AudioRingWriterWritePCM16(
 
 /// Opens the ring from the Core Audio driver side. Returns NULL until the app has started.
 RC001AudioRingReader *RC001AudioRingReaderOpen(void);
+RC001AudioRingReader *RC001AudioRingReaderOpenNamed(const char *name);
 void RC001AudioRingReaderClose(RC001AudioRingReader *reader);
+
+/// Removes an isolated named ring after all of its test/diagnostic users close it.
+bool RC001AudioRingUnlinkNamed(const char *name);
 
 /// Fills an interleaved stereo Float32 Core Audio input buffer.
 /// Mono remote audio is duplicated into both channels; underflow is filled with silence.

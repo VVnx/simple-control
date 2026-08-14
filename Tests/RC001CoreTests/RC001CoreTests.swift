@@ -7,13 +7,13 @@ import XCTest
 final class RC001CoreTests: XCTestCase {
     func testAppVersionFormatsReleaseAndBuild() {
         let version = RC001AppVersion(infoDictionary: [
-            "CFBundleShortVersionString": "0.1.9",
-            "CFBundleVersion": "10",
+            "CFBundleShortVersionString": "0.1.10",
+            "CFBundleVersion": "11",
         ])
 
-        XCTAssertEqual(version.release, "0.1.9")
-        XCTAssertEqual(version.build, "10")
-        XCTAssertEqual(version.displayText, "版本 0.1.9（构建 10）")
+        XCTAssertEqual(version.release, "0.1.10")
+        XCTAssertEqual(version.build, "11")
+        XCTAssertEqual(version.displayText, "版本 0.1.10（构建 11）")
     }
 
     func testAppVersionFallsBackForDevelopmentBuild() {
@@ -79,10 +79,10 @@ final class RC001CoreTests: XCTestCase {
     }
 
     func testSharedAudioRingUpsamplesAndDuplicatesMono() throws {
-        let writer = try XCTUnwrap(
-            RC001AudioRingWriterCreate(),
-            "shared audio errno=\(RC001AudioRingLastError())"
-        )
+        let name = isolatedAudioRingName()
+        defer { name.withCString { _ = RC001AudioRingUnlinkNamed($0) } }
+
+        let writer = try XCTUnwrap(name.withCString(RC001AudioRingWriterCreateNamed))
         defer { RC001AudioRingWriterDestroy(writer) }
 
         RC001AudioRingWriterBeginStream(writer)
@@ -91,7 +91,7 @@ final class RC001CoreTests: XCTestCase {
             RC001AudioRingWriterWritePCM16(writer, buffer.baseAddress, buffer.count, 16_000)
         })
 
-        let reader = try XCTUnwrap(RC001AudioRingReaderOpen())
+        let reader = try XCTUnwrap(name.withCString(RC001AudioRingReaderOpenNamed))
         defer { RC001AudioRingReaderClose(reader) }
         var stereo = Array(repeating: Float.zero, count: 18)
         let framesRead = stereo.withUnsafeMutableBufferPointer { buffer in
@@ -102,5 +102,50 @@ final class RC001CoreTests: XCTestCase {
         XCTAssertEqual(stereo[0...5], [0, 0, 0, 0, 0, 0])
         XCTAssertEqual(stereo[6...11], [0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
         XCTAssertEqual(stereo[12...17], [-0.5, -0.5, -0.5, -0.5, -0.5, -0.5])
+    }
+
+    func testSharedAudioRingReconnectsWithoutReplacingLiveObject() throws {
+        let name = isolatedAudioRingName()
+        defer { name.withCString { _ = RC001AudioRingUnlinkNamed($0) } }
+
+        let firstWriter = try XCTUnwrap(name.withCString(RC001AudioRingWriterCreateNamed))
+        RC001AudioRingWriterBeginStream(firstWriter)
+        var firstSample: Int16 = 0
+        XCTAssertTrue(RC001AudioRingWriterWritePCM16(firstWriter, &firstSample, 1, 16_000))
+
+        let reader = try XCTUnwrap(name.withCString(RC001AudioRingReaderOpenNamed))
+        defer { RC001AudioRingReaderClose(reader) }
+        var stereo = Array(repeating: Float.zero, count: 6)
+        XCTAssertEqual(
+            stereo.withUnsafeMutableBufferPointer {
+                RC001AudioRingReaderReadStereoFloat32(reader, $0.baseAddress, 3)
+            },
+            3
+        )
+        RC001AudioRingWriterDestroy(firstWriter)
+
+        let replacementWriter = try XCTUnwrap(
+            name.withCString(RC001AudioRingWriterCreateNamed),
+            "shared audio errno=\(RC001AudioRingLastError())"
+        )
+        defer { RC001AudioRingWriterDestroy(replacementWriter) }
+        RC001AudioRingWriterBeginStream(replacementWriter)
+        var replacementSample: Int16 = 16_384
+        XCTAssertTrue(
+            RC001AudioRingWriterWritePCM16(replacementWriter, &replacementSample, 1, 16_000)
+        )
+
+        stereo = Array(repeating: 0, count: 6)
+        XCTAssertEqual(
+            stereo.withUnsafeMutableBufferPointer {
+                RC001AudioRingReaderReadStereoFloat32(reader, $0.baseAddress, 3)
+            },
+            3
+        )
+        XCTAssertEqual(stereo, Array(repeating: 0.5, count: 6))
+    }
+
+    private func isolatedAudioRingName() -> String {
+        "/R1T-\(ProcessInfo.processInfo.processIdentifier)-\(UInt32.random(in: .min ... .max))"
     }
 }

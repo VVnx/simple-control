@@ -56,7 +56,17 @@ static bool RC001AudioMemoryIsValid(const RC001AudioSharedMemory *memory) {
 }
 
 RC001AudioRingWriter *RC001AudioRingWriterCreate(void) {
-    int descriptor = shm_open(RC001_AUDIO_SHM_NAME, O_CREAT | O_RDWR, 0666);
+    return RC001AudioRingWriterCreateNamed(RC001_AUDIO_SHM_NAME);
+}
+
+RC001AudioRingWriter *RC001AudioRingWriterCreateNamed(const char *name) {
+    if (name == NULL || name[0] == '\0') {
+        errno = EINVAL;
+        RC001AudioRingRememberError(1);
+        return NULL;
+    }
+
+    int descriptor = shm_open(name, O_CREAT | O_RDWR, 0666);
     if (descriptor < 0) {
         RC001AudioRingRememberError(1);
         return NULL;
@@ -68,16 +78,12 @@ RC001AudioRingWriter *RC001AudioRingWriterCreate(void) {
         close(descriptor);
         return NULL;
     }
-    if (objectStatus.st_size != (off_t)sizeof(RC001AudioSharedMemory)) {
-        if (objectStatus.st_size != 0) {
-            close(descriptor);
-            shm_unlink(RC001_AUDIO_SHM_NAME);
-            descriptor = shm_open(RC001_AUDIO_SHM_NAME, O_CREAT | O_EXCL | O_RDWR, 0666);
-            if (descriptor < 0) {
-                RC001AudioRingRememberError(2);
-                return NULL;
-            }
-        }
+    bool resized = objectStatus.st_size < (off_t)sizeof(RC001AudioSharedMemory);
+    if (resized) {
+        // Darwin reports a POSIX shared-memory object's size rounded up to a
+        // page boundary. Treating any non-exact size as incompatible unlinked
+        // the live object and split existing readers from a newly created
+        // writer. Grow undersized objects in place and accept larger ones.
         if (ftruncate(descriptor, (off_t)sizeof(RC001AudioSharedMemory)) != 0) {
             RC001AudioRingRememberError(2);
             close(descriptor);
@@ -99,14 +105,27 @@ RC001AudioRingWriter *RC001AudioRingWriterCreate(void) {
         return NULL;
     }
 
-    memset(memory, 0, sizeof(*memory));
-    memory->magic = RC001_AUDIO_MAGIC;
-    memory->version = RC001_AUDIO_VERSION;
-    memory->sampleRate = RC001_AUDIO_OUTPUT_SAMPLE_RATE;
-    memory->capacity = RC001_AUDIO_CAPACITY;
-    atomic_store_explicit(&memory->generation, 0, memory_order_relaxed);
-    atomic_store_explicit(&memory->streamStartIndex, 0, memory_order_relaxed);
-    atomic_store_explicit(&memory->writeIndex, 0, memory_order_release);
+    bool reusable = !resized && RC001AudioMemoryIsValid(memory);
+    if (reusable) {
+        // Keep the generation monotonic across app restarts so a reader that
+        // remains open can discard its old cursor and follow the new writer.
+        uint64_t nextGeneration = atomic_load_explicit(
+            &memory->generation,
+            memory_order_acquire
+        ) + 1;
+        atomic_store_explicit(&memory->streamStartIndex, 0, memory_order_relaxed);
+        atomic_store_explicit(&memory->writeIndex, 0, memory_order_relaxed);
+        atomic_store_explicit(&memory->generation, nextGeneration, memory_order_release);
+    } else {
+        memset(memory, 0, sizeof(*memory));
+        memory->magic = RC001_AUDIO_MAGIC;
+        memory->version = RC001_AUDIO_VERSION;
+        memory->sampleRate = RC001_AUDIO_OUTPUT_SAMPLE_RATE;
+        memory->capacity = RC001_AUDIO_CAPACITY;
+        atomic_store_explicit(&memory->generation, 0, memory_order_relaxed);
+        atomic_store_explicit(&memory->streamStartIndex, 0, memory_order_relaxed);
+        atomic_store_explicit(&memory->writeIndex, 0, memory_order_release);
+    }
 
     RC001AudioRingWriter *writer = calloc(1, sizeof(*writer));
     if (writer == NULL) {
@@ -172,7 +191,17 @@ bool RC001AudioRingWriterWritePCM16(
 }
 
 RC001AudioRingReader *RC001AudioRingReaderOpen(void) {
-    int descriptor = shm_open(RC001_AUDIO_SHM_NAME, O_RDONLY, 0);
+    return RC001AudioRingReaderOpenNamed(RC001_AUDIO_SHM_NAME);
+}
+
+RC001AudioRingReader *RC001AudioRingReaderOpenNamed(const char *name) {
+    if (name == NULL || name[0] == '\0') {
+        errno = EINVAL;
+        RC001AudioRingRememberError(4);
+        return NULL;
+    }
+
+    int descriptor = shm_open(name, O_RDONLY, 0);
     if (descriptor < 0) {
         RC001AudioRingRememberError(4);
         return NULL;
@@ -263,4 +292,17 @@ size_t RC001AudioRingReaderReadStereoFloat32(
     }
     reader->readIndex += framesToRead;
     return framesToRead;
+}
+
+bool RC001AudioRingUnlinkNamed(const char *name) {
+    if (name == NULL || name[0] == '\0') {
+        errno = EINVAL;
+        RC001AudioRingRememberError(6);
+        return false;
+    }
+    if (shm_unlink(name) == 0 || errno == ENOENT) {
+        return true;
+    }
+    RC001AudioRingRememberError(6);
+    return false;
 }
