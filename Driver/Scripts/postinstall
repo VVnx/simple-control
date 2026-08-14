@@ -58,6 +58,11 @@ fi
 /bin/launchctl enable "system/$daemon_label"
 /bin/launchctl kickstart -k "system/$daemon_label"
 
+# End any pre-upgrade bridge process that may still hold an unlinked audio
+# ring. The user can reopen the newly installed menu-bar app after Installer
+# finishes; launching a GUI app from this root script would use the wrong user.
+/usr/bin/killall rc001-probe >/dev/null 2>&1 || true
+
 # The system launchd domain rejects kickstart for this SIP-protected service on
 # current macOS releases. A signal is sufficient; launchd starts it again. Do
 # not fail an otherwise valid install if the process is between restarts.
