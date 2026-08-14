@@ -29,7 +29,32 @@ fi
 /bin/chmod 644 "$daemon_path"
 
 /bin/launchctl bootout "system/$daemon_label" >/dev/null 2>&1 || true
-/bin/launchctl bootstrap system "$daemon_path"
+
+# bootout is asynchronous. During an upgrade launchd can keep the old job in
+# its removal state briefly, and an immediate bootstrap then fails with
+# EALREADY (reported by launchctl as error 5). Wait for the old job to
+# disappear and retry bootstrap so normal upgrades do not fail on that race.
+for attempt in {1..40}; do
+  if ! /bin/launchctl print "system/$daemon_label" >/dev/null 2>&1; then
+    break
+  fi
+  /bin/sleep 0.25
+done
+
+bootstrap_succeeded=0
+for attempt in {1..40}; do
+  if /bin/launchctl bootstrap system "$daemon_path" >/dev/null 2>&1; then
+    bootstrap_succeeded=1
+    break
+  fi
+  /bin/sleep 0.25
+done
+
+if [[ "$bootstrap_succeeded" -ne 1 ]]; then
+  print -u2 "RC001 HID helper could not be registered after waiting for the previous service"
+  exit 1
+fi
+
 /bin/launchctl enable "system/$daemon_label"
 /bin/launchctl kickstart -k "system/$daemon_label"
 

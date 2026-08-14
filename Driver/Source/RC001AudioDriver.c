@@ -1602,7 +1602,10 @@ static OSStatus	NullAudio_GetBoxPropertyData(AudioServerPlugInDriverRef inDriver
 			//	any 32 bit integer, but common values for this property are defined in
 			//	<CoreAudio/AudioHardwareBase.h>
 			FailWithAction(inDataSize < sizeof(UInt32), theAnswer = kAudioHardwareBadPropertySizeError, Done, "NullAudio_GetBoxPropertyData: not enough space for the return value of kAudioDevicePropertyTransportType for the box");
-			*((UInt32*)outData) = kAudioDeviceTransportTypeVirtual;
+			// The audio is transported by the paired RC001 Bluetooth remote.  Reporting
+			// this as a generic virtual device causes some microphone pickers (notably
+			// DoubaoIme) to hide it even though Core Audio can capture it normally.
+			*((UInt32*)outData) = kAudioDeviceTransportTypeBluetooth;
 			*outDataSize = sizeof(UInt32);
 			break;
 
@@ -2218,7 +2221,9 @@ static OSStatus	NullAudio_GetDevicePropertyData(AudioServerPlugInDriverRef inDri
 			//	any 32 bit integer, but common values for this property are defined in
 			//	<CoreAudio/AudioHardwareBase.h>
 			FailWithAction(inDataSize < sizeof(UInt32), theAnswer = kAudioHardwareBadPropertySizeError, Done, "NullAudio_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyTransportType for the device");
-			*((UInt32*)outData) = kAudioDeviceTransportTypeVirtual;
+			// Match the physical source of the samples so microphone clients that
+			// exclude software loopback devices still expose RC001 as an input.
+			*((UInt32*)outData) = kAudioDeviceTransportTypeBluetooth;
 			*outDataSize = sizeof(UInt32);
 			break;
 
